@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import pickle
 import logging
+import os 
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -46,8 +47,8 @@ def predict_sentiment():
             return jsonify({'error': 'Prediction failed'}), 500
     else:
         return jsonify({'error': 'No text provided'}), 400
-    
-    # Define a route for feedback submission
+
+# Define a route for feedback submission
 @app.route('/feedback', methods=['POST'])
 def submit_feedback():
     data = request.json
@@ -55,14 +56,19 @@ def submit_feedback():
     user_feedback = data.get('feedback')
 
     if sentiment and user_feedback:
-        # Store feedback in a database or log file (you can implement this)
+        # Store feedback in a database or log file 
         # For simplicity, we'll just print it for now
         print(f"Feedback received: Sentiment: {sentiment}, Feedback: {user_feedback}")
         return jsonify({'status': 'success', 'message': 'Feedback recorded.'}), 200
     else:
         return jsonify({'error': 'Sentiment and feedback are required.'}), 400
 
+# Health check route
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy'}), 200
 
 # Main
 if __name__ == "__main__":
-    app.run(debug=True)  # Run Flask app in debug mode
+    port = int(os.environ.get("PORT", 5000))  # Default to 5000 if not set
+    app.run(host='0.0.0.0', port=port, debug=True)  # Run Flask app in debug mode
