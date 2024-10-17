@@ -8,6 +8,20 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from textblob import TextBlob
+from gensim.models import Word2Vec
+from transformers import BertTokenizer, BertModel
+import torch
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.model_selection import GridSearchCV
+from sklearn.ensemble import VotingClassifier
+from sklearn.model_selection import cross_val_score
 
 # Download required NLTK data
 nltk.download('punkt')
@@ -60,29 +74,28 @@ df['Cleaned_Text'] = df['Text'].apply(preprocess_text)
 # Display the first few rows to verify
 print("\nFirst few rows after cleaning:\n", df[['Text', 'Cleaned_Text']].head())
 
-# Function to perform sentiment analysis
-def analyze_sentiment(text):
-    score = analyzer.polarity_scores(text)
-    # Classify sentiment based on the compound score
-    if score['compound'] >= 0.05:
+# Function to perform sentiment analysis using TextBlob
+def analyze_sentiment_textblob(text):
+    blob = TextBlob(text)
+    sentiment = blob.sentiment
+    if sentiment.polarity > 0:
         return 'Positive'
-    elif score['compound'] <= -0.05:
+    elif sentiment.polarity < 0:
         return 'Negative'
     else:
         return 'Neutral'
 
-# Apply sentiment analysis to cleaned text
-df['Sentiment'] = df['Cleaned_Text'].apply(analyze_sentiment)
+# Apply sentiment analysis to cleaned text using TextBlob
+df['Sentiment_TextBlob'] = df['Cleaned_Text'].apply(analyze_sentiment_textblob)
 
 # EDA: Check the distribution of sentiments 
 plt.figure(figsize=(10, 6))
-sns.countplot(data=df, x='Sentiment', palette='viridis', hue='Sentiment', legend=False)
-plt.title('Distribution of Sentiments')
+sns.countplot(data=df, x='Sentiment_TextBlob', palette='viridis', hue='Sentiment_TextBlob', legend=False)
+plt.title('Distribution of Sentiments (TextBlob)')
 plt.xlabel('Sentiment')
 plt.ylabel('Count')
 plt.xticks(rotation=45)
 plt.show()
-
 
 from wordcloud import WordCloud
 
@@ -94,14 +107,14 @@ def plot_wordcloud(text):
     plt.show()
 
 # Generate and plot word clouds for different sentiments
-plot_wordcloud(' '.join(df[df['Sentiment'] == 'Positive']['Cleaned_Text']))
-plot_wordcloud(' '.join(df[df['Sentiment'] == 'Negative']['Cleaned_Text']))
-plot_wordcloud(' '.join(df[df['Sentiment'] == 'Neutral']['Cleaned_Text']))
+plot_wordcloud(' '.join(df[df['Sentiment_TextBlob'] == 'Positive']['Cleaned_Text']))
+plot_wordcloud(' '.join(df[df['Sentiment_TextBlob'] == 'Negative']['Cleaned_Text']))
+plot_wordcloud(' '.join(df[df['Sentiment_TextBlob'] == 'Neutral']['Cleaned_Text']))
 
 from collections import Counter
 
 def plot_most_common_words(sentiment):
-    words = ' '.join(df[df['Sentiment'] == sentiment]['Cleaned_Text']).split()
+    words = ' '.join(df[df['Sentiment_TextBlob'] == sentiment]['Cleaned_Text']).split()
     most_common_words = Counter(words).most_common(10)
     plt.figure(figsize=(10, 6))
     plt.bar(*zip(*most_common_words))
@@ -112,15 +125,14 @@ def plot_most_common_words(sentiment):
     plt.show()
 
 # Plot for each sentiment
-for sentiment in df['Sentiment'].unique():
+for sentiment in df['Sentiment_TextBlob'].unique():
     plot_most_common_words(sentiment)
-
 
 # Save the preprocessed data into a new CSV file
 df.to_csv(r'C:\Priya Gurung\Final Project\preprocessed_social_media_data.csv', index=False)
 
 # Print summary statistics for sentiments
-sentiment_counts = df['Sentiment'].value_counts()
+sentiment_counts = df['Sentiment_TextBlob'].value_counts()
 print("\nSentiment Counts:\n", sentiment_counts)
 
 # ---- Feature Engineering ----
@@ -137,7 +149,7 @@ tfidf_matrix = tfidf_vectorizer.fit_transform(df['Cleaned_Text'])
 
 # Convert to DataFrame for easier analysis (optional)
 tfidf_df = pd.DataFrame(tfidf_matrix.toarray(), columns=tfidf_vectorizer.get_feature_names_out())
-df = pd.concat([df, tfidf_df], axis=1)  # Append TF-IDF features to the original DataFrame
+df = pd.concat([df, tfidf_df], axis=1) 
 
 # Step 2: Word2Vec
 tokenized_texts = [text.split() for text in df['Cleaned_Text']]
@@ -188,13 +200,14 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.ensemble import VotingClassifier
+from sklearn.model_selection import StratifiedKFold
 
 # Choose features (TF-IDF matrix for this example)
-X = tfidf_matrix  # or use df['BERT_Vector'] if you prefer BERT embeddings
-y = df['Sentiment']
+X = tfidf_matrix 
+y = df['Sentiment_TextBlob']
 
 # Split the dataset
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
 # Initialize and train Logistic Regression model
 lr_model = LogisticRegression(max_iter=1000)
@@ -222,6 +235,7 @@ svm_model = SVC(kernel='linear')
 svm_model.fit(X_train, y_train)
 evaluate_model(svm_model, X_test, y_test, "SVM")
 
+
 # Hyperparameter tuning for Random Forest
 rf_param_grid = {
     'n_estimators': [50, 100, 200],
@@ -246,13 +260,39 @@ print("Best parameters for SVM:", svm_grid_search.best_params_)
 # Create a Voting Classifier
 voting_classifier = VotingClassifier(
     estimators=[
-        ('lr', lr_model), 
-        ('rf', rf_grid_search.best_estimator_), 
+        ('lr', lr_model),
+        ('rf', rf_grid_search.best_estimator_),
         ('svm', svm_grid_search.best_estimator_)
-    ], 
+    ],
     voting='hard'
 )
 voting_classifier.fit(X_train, y_train)
 
 # Evaluate Voting Classifier
 evaluate_model(voting_classifier, X_test, y_test, "Voting Classifier")
+
+# Cross-validation for Logistic Regression
+lr_scores = cross_val_score(lr_model, X, y, cv=5, scoring='accuracy')
+print("Logistic Regression Cross-Validation Scores:", lr_scores)
+print("Mean Accuracy:", lr_scores.mean())
+
+# Save the best model (e.g., Voting Classifier)
+import pickle
+
+with open('best_model.pkl', 'wb') as f:
+    pickle.dump(voting_classifier, f)
+
+    import pickle
+
+# TF-IDF Vectorization
+tfidf_vectorizer = TfidfVectorizer(max_features=5000)
+tfidf_matrix = tfidf_vectorizer.fit_transform(df['Cleaned_Text'])
+
+# Save the vectorizer
+with open('vectorizer.pkl', 'wb') as f:
+    pickle.dump(tfidf_vectorizer, f)
+
+# Continue with your existing code...
+
+
+print("\nModel Training and Evaluation Completed.")

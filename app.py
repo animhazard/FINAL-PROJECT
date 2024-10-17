@@ -1,21 +1,33 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import pickle
 import logging
 import os 
 
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app)  # Enable CORS
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 
-# Load the trained sentiment analysis model and vectorizer
+# Load the trained sentiment analysis models and vectorizers
+model_files = {
+    "best": "best_model.pkl",
+    "random_forest": "random_forest_model.pkl",
+    "svm": "svm_model.pkl",
+}
+
+vectorizer_file = "vectorizer.pkl"
+
+models = {}
 try:
-    model = pickle.load(open("best_model.pkl", "rb"))  
-    vectorizer = pickle.load(open("vectorizer.pkl", "rb"))  
+    for model_name, file_path in model_files.items():
+        models[model_name] = pickle.load(open(file_path, "rb"))
+    vectorizer = pickle.load(open(vectorizer_file, "rb"))
 except FileNotFoundError as e:
     logging.error(e)
-    exit("Model or vectorizer file not found. Make sure both files are in the project directory.")
+    exit("One or more model or vectorizer files are missing. Please ensure they are in the project directory.")
 
 # Define a basic route for the home page ("/")
 @app.route('/')
@@ -27,20 +39,24 @@ def home():
 def predict_sentiment():
     data = request.json  # Expecting a JSON input
     text = data.get('text')  # Get the 'text' field from JSON input
+    model_type = data.get('model')  # Specify which model to use (best, random_forest, svm)
 
     if text:
         if not isinstance(text, str):
             return jsonify({'error': 'Text must be a string'}), 400
+        if model_type not in models:
+            return jsonify({'error': f'Invalid model type. Available models: {list(models.keys())}'}), 400
+
         # Preprocess the input text using the vectorizer
         text_vector = vectorizer.transform([text])  # Use the vectorizer to transform the text
         
         try:
-            # Make prediction
-            prediction = model.predict(text_vector)  # Model expects vectorized input
+            # Make prediction using the specified model
+            prediction = models[model_type].predict(text_vector)  # Model expects vectorized input
             
             # Return the result (assuming binary classification: 0 = Negative, 1 = Positive)
             sentiment = 'positive' if prediction[0] == 1 else 'negative'
-            logging.info(f'Input text: "{text}" - Predicted sentiment: {sentiment}')
+            logging.info(f'Input text: "{text}" - Predicted sentiment using {model_type}: {sentiment}')
             return jsonify({'sentiment': sentiment})
         except Exception as e:
             logging.error(f'Error during prediction: {e}')
@@ -57,7 +73,6 @@ def submit_feedback():
 
     if sentiment and user_feedback:
         # Store feedback in a database or log file 
-        # For simplicity, we'll just print it for now
         print(f"Feedback received: Sentiment: {sentiment}, Feedback: {user_feedback}")
         return jsonify({'status': 'success', 'message': 'Feedback recorded.'}), 200
     else:
